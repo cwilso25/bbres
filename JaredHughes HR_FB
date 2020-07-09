@@ -1,0 +1,72 @@
+
+######################
+###Install Packages###
+######################
+
+install.packages(Lahman)
+
+library(Lahman)
+library(dplyr)
+library(ggplot2)
+library(baseballr)
+
+
+########################
+###Get Fangraphs Data###
+########################
+
+
+pitching <- baseballr::fg_pitch_leaders(2011,2019,league = "all", qual = 59,
+                                        pitcher_type = "rel",ind = 1)
+
+##Filtered data to be all relief pitchers who pitched more
+##than 59 innings per season between 2011-2019 (Hughes' active seasons)
+## The limit of 59 innings captured most of Hughes' seasons
+
+
+######################
+###Find HR/FB ratio###
+######################
+
+
+##Average HR/FB for qualified pitchers##
+
+QualPitchers <- pitching %>%
+  group_by(Season) %>%
+  summarize(hrFB = mean((HR/FB)*100))
+
+##Jared Hughes' HR/FB for each season##
+
+JaredHughes <- pitching %>%
+  filter(Name == 'Jared Hughes') %>%
+  group_by(Season) %>%
+  summarize(hrFB_JH = mean((HR/FB)*100))
+
+##Graph comparing Jared Hughes and the average qualified pitchers##
+
+ggplot(QualPitchers, aes(x = Season, y = hrFB,group = 1)) +
+  geom_point() +
+  geom_path() +
+  geom_point(aes(x = Season,y = hrFB_JH, group = 1),JaredHughes,color = "green") +
+  geom_path(aes(x = Season,y = hrFB_JH, group = 1),JaredHughes,color = "green")
+
+######################################
+###Compared to Pitchers in the 80th###
+######################################
+
+##Calculated top 80th percentile for worst HR/FB ratios##
+
+Percentile <- pitching %>%
+  group_by(Season) %>%
+  summarize(quartHRfb = quantile((HR/FB)*100, .8))
+
+##Graph comparing Jared Hughes, pitchers in the the top 80th percentile##
+##for worst HR/FB ratios and the average qualified pitchers##
+
+ggplot(QualPitchers, aes(x = Season, y = hrFB,group = 1)) +
+  geom_point() +
+  geom_path() +
+  geom_point(aes(x = Season,y = hrFB_JH, group = 1),JaredHughes,color = "green") +
+  geom_path(aes(x = Season,y = hrFB_JH, group = 1),JaredHughes,color = "green") +
+  geom_point(aes(x = Season,y = quartHRfb, group = 1),Percentile,color = "red") +
+  geom_path(aes(x = Season,y = quartHRfb, group = 1),Percentile,color = "red")
