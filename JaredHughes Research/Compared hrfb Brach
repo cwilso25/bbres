@@ -1,0 +1,63 @@
+###################
+###Load Packages###
+###################
+
+install.packages(Lahman)
+library(Lahman)
+library(dplyr)
+library(ggplot2)
+library(baseballr)
+
+
+########################
+###Get Fangraphs Data###
+########################
+
+
+pitching <- baseballr::fg_pitch_leaders(2011,2019,league = "all", qual = 59,
+                                        pitcher_type = "rel",ind = 1)
+
+##Filtered data to be all relief pitchers who pitched more
+##than 59 innings per season between 2011-2019 (Hughes' active seasons)
+## The limit of 59 innings captured most of Hughes' seasons
+
+###################################
+###Calculate Jared Hughes' HR/FB###
+###################################
+
+JaredHughes <- pitching %>%
+  filter(Name == 'Jared Hughes') %>%
+  group_by(Season) %>%
+  summarize(JH_hrfb = mean((HR/FB)*100))
+
+###################################
+###Calculate Brad Brach's HR/FB###
+###################################
+
+pitching2 <- baseballr::fg_pitch_leaders(2015,2019,league = "all", qual = 50,
+                                        pitcher_type = "pit",ind = 1)
+BradBrach <- pitching2 %>%
+  filter(Name == 'Brad Brach') %>%
+  group_by(Season) %>%
+  summarize(BB_hrfb = mean((HR/FB)*100))
+
+#################################
+###Tidy data to create a graph###
+#################################
+
+dataset <- left_join(JaredHughes,BradBrach,by="Season")%>%
+  gather("Type","HR_FB",-Season)
+
+################
+###Graph data###
+################
+
+ggplot(dataset, aes(x = Season, y = HR_FB, group = Type)) +
+  geom_line(aes(color = Type)) +
+  geom_point(aes(color = Type)) +
+  ggtitle("Jared Hughes Home Run to Flyball Ratio","Compared to Brad Brach") +
+  labs(y = "Home Run to Flyball Ratio") +
+  theme_classic() +
+  scale_color_discrete(name="Player",
+                       breaks=c("JH_hrfb", "BB_hrfb"),
+                       labels=c("Jared Hughes", "Brad Brach"))
