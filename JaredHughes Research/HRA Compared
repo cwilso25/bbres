@@ -1,0 +1,65 @@
+###################
+###Load Packages###
+###################
+
+install.packages(Lahman)
+
+library(Lahman)
+library(dplyr)
+library(ggplot2)
+
+###################################################
+###Calculate Average Relievers Home Runs Allowed###
+###################################################
+
+QualP <- Lahman::Pitching %>%
+  filter(yearID >= 2011 &
+           IPouts >= 150,
+         GS <= 3) %>%
+  group_by(yearID) %>%
+  summarize(HRavg = mean(HR))
+#Starting in 2011 and looking for only qualified relievers#
+
+##########################################
+###Average Home Runs Allowed for Hughes###
+##########################################
+
+JH <- Lahman::Pitching %>%
+  filter(playerID == 'hugheja02'&
+           IPouts >= 150) %>%
+  group_by(yearID) %>%
+  summarize(JHavg = sum(HR))
+
+###################################################
+###Average Home Runs Allowed for Elite Relievers###
+###################################################
+
+EliteP <- Lahman::Pitching %>%
+  filter(yearID >= 2011 &
+           ERA <= 2 &
+           IPouts >= 150,
+         GS <= 3) %>%
+  group_by(yearID) %>%
+  summarize(Eliteavg = mean(HR))
+
+#################################
+###Tidy data to create a graph###
+#################################
+
+x <- left_join(EliteP,JH,by="yearID")
+ds <- left_join(x,QualP,by="yearID") %>%
+  gather("Type","AvgHR",-yearID)
+
+################
+###Graph data###
+################
+
+ggplot(ds, aes(x = yearID, y = AvgHR)) +
+  geom_line(aes(color = Type)) +
+  ggtitle("Jared Hughes Home Runs Allowed","Compared to Average and Elite Relievers") +
+  labs(y="Season") +
+  scale_x_continuous(name = " ", breaks = c(2011,2013,2015,2017,2019)) +
+  theme_classic() +
+  scale_color_discrete(name="Type Of Player",
+                      breaks=c("Eliteavg", "HRavg", "JHavg"),
+                      labels=c("Elite Relievers", "Average Relievers", "Jared Hughes"))
