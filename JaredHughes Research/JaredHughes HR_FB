@@ -1,9 +1,8 @@
-######################
-###Install Packages###
-######################
+###################
+###Load Packages###
+###################
 
 install.packages(Lahman)
-
 library(Lahman)
 library(dplyr)
 library(ggplot2)
@@ -28,44 +27,52 @@ pitching <- baseballr::fg_pitch_leaders(2011,2019,league = "all", qual = 59,
 ######################
 
 
-##Average HR/FB for qualified pitchers##
+##Average HR/FB for qualified relievers##
 
 QualPitchers <- pitching %>%
   group_by(Season) %>%
-  summarize(hrFB = mean((HR/FB)*100))
+  summarize(AvgRatio = mean((HR/FB)*100))
 
 ##Jared Hughes' HR/FB for each season##
 
 JaredHughes <- pitching %>%
   filter(Name == 'Jared Hughes') %>%
   group_by(Season) %>%
-  summarize(hrFB_JH = mean((HR/FB)*100))
-
-##Graph comparing Jared Hughes and the average qualified pitchers##
-
-ggplot(QualPitchers, aes(x = Season, y = hrFB,group = 1)) +
-  geom_point() +
-  geom_path() +
-  geom_point(aes(x = Season,y = hrFB_JH, group = 1),JaredHughes,color = "green") +
-  geom_path(aes(x = Season,y = hrFB_JH, group = 1),JaredHughes,color = "green")
+  summarize(JHratio = mean((HR/FB)*100))
 
 ######################################
-###Compared to Pitchers in the 80th###
+###Compared to Relievers in the 80th###
 ######################################
 
 ##Calculated top 80th percentile for worst HR/FB ratios##
 
 Percentile <- pitching %>%
   group_by(Season) %>%
-  summarize(quartHRfb = quantile((HR/FB)*100, .8))
+  summarize(PercentRatio = quantile((HR/FB)*100, .8))
 
 ##Graph comparing Jared Hughes, pitchers in the the top 80th percentile##
 ##for worst HR/FB ratios and the average qualified pitchers##
 
-ggplot(QualPitchers, aes(x = Season, y = hrFB,group = 1)) +
-  geom_point() +
-  geom_path() +
-  geom_point(aes(x = Season,y = hrFB_JH, group = 1),JaredHughes,color = "green") +
-  geom_path(aes(x = Season,y = hrFB_JH, group = 1),JaredHughes,color = "green") +
-  geom_point(aes(x = Season,y = quartHRfb, group = 1),Percentile,color = "red") +
-  geom_path(aes(x = Season,y = quartHRfb, group = 1),Percentile,color = "red")
+###############
+###Tidy Data###
+###############
+
+y <- left_join(QualPitchers,JaredHughes,by="Season")
+df <- left_join(y,Percentile,by="Season") %>%
+  gather("Type","HR_FB",-Season)
+
+################
+###Graph data###
+################
+
+ggplot(df, aes(x = Season, y = HR_FB,group = Type)) +
+  geom_line(aes(color = Type)) +
+  geom_point(aes(color = Type)) +
+  ggtitle("Jared Hughes Home Run to Flyball Ratio","Compared to Average and 80th percentile of Relievers") +
+  labs(x="Season",y="Home Run to Flyball Ratio") +
+  theme_classic() +
+  scale_color_discrete(name="Type Of Player",
+                       breaks=c("AvgRatio", "JHratio", "PercentRatio"),
+                       labels=c("Average Relievers", "Jared Hughes",
+                                "80th Percentile n/of Relievers")) +
+  scale_y_continuous(labels = function(x) paste0(x, "%"))
