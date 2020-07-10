@@ -1,5 +1,5 @@
 # bbres
-My baseball research depository!
+My baseball research repository!
 
 # Motivation
 I'm looking into interesting topics in baseball.
