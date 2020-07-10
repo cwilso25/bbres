@@ -1,0 +1,35 @@
+###################
+###Load Packages###
+###################
+
+install.packages(Lahman)
+
+library(Lahman)
+library(dplyr)
+library(ggplot2)
+library(baseballr)
+
+
+########################
+###Get Fangraphs Data###
+########################
+
+
+pitching <- baseballr::fg_pitch_leaders(2011,2019,league = "all", qual = 59,
+                                        pitcher_type = "rel",ind = 1)
+
+##How well does HR_FB correlate to FIP##
+
+ds <- pitching %>%
+  mutate(HRfb = (HR/FB)*100)
+
+ggplot(ds, aes(x = HRfb, y = FIP))+
+  geom_point()
+
+library("ggpubr")
+
+ggscatter(ds, x = "HRfb", y = "FIP", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson",
+          main = 'How well does FIP and HR/FB correlate?',
+          xlab = "Home Runs to Flyball Ratio", ylab = "FIP")
