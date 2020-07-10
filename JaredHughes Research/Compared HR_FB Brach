@@ -60,4 +60,5 @@ ggplot(dataset, aes(x = Season, y = HR_FB, group = Type)) +
   theme_classic() +
   scale_color_discrete(name="Player",
                        breaks=c("JH_hrfb", "BB_hrfb"),
-                       labels=c("Jared Hughes", "Brad Brach"))
+                       labels=c("Jared Hughes", "Brad Brach")) +
+  scale_y_continuous(labels = function(x) paste0(x, "%"))
