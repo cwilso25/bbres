@@ -69,7 +69,7 @@ ggplot(df, aes(x = Season, y = HR_FB,group = Type)) +
   geom_line(aes(color = Type)) +
   geom_point(aes(color = Type)) +
   ggtitle("Jared Hughes Home Run to Flyball Ratio","Compared to Average and 80th percentile of Relievers") +
-  labs(x="Home Run to Flyball Ratio", y="Season",) +
+  labs(x="Home Run to Flyball Ratio", y="Season") +
   theme_classic() +
   scale_color_discrete(name="Type Of Player",
                        breaks=c("AvgRatio", "JHratio", "PercentRatio"),
