@@ -36,7 +36,7 @@ JH <- Lahman::Pitching %>%
 
 EliteP <- Lahman::Pitching %>%
   filter(yearID >= 2011 &
-           ERA <= 2 &
+           ERA <= 2.5 &
            IPouts >= 150,
          GS <= 3) %>%
   group_by(yearID) %>%
