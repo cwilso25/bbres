@@ -1,6 +1,9 @@
 # bbres
 Lahman and Retrosheet data used to produce research conducted in R.
 
+# Note
+You will need a twitter developer account in order to repeat or modify this research
+
 # Title
 Can personality predict performance?
 
