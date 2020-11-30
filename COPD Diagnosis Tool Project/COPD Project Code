@@ -1,0 +1,168 @@
+#load packages
+library(dplyr)
+library(leaps)
+library(caret)
+library(nnet)
+library(tidyverse)
+library(effects)
+library(e1071)
+
+
+#make list of files names
+filenames <- list.files(path = "/Users/clairewilson/Downloads/archive/Respiratory_Sound_Database/Respiratory_Sound_Database/audio_and_txt_files",pattern = ".*txt")
+head(filenames)
+
+names <- substr(filenames,1,22)
+files <- list.files()
+
+#loop to read files into our environment
+for(i in names){
+  filepath <-file.path("/Users/clairewilson/Downloads/archive/Respiratory_Sound_Database/Respiratory_Sound_Database/audio_and_txt_files/",paste(i,".txt",sep = ""))
+  dfName <- paste("file",i,sep = "_")
+  assign(dfName,read.delim(filepath,header = FALSE,colClasses = c('character','character','numeric','numeric'),sep = "\t"))
+}
+
+names_2 <- paste('file',names,sep = "_")
+head(names_2)
+
+#Get data in a list
+list_df <- mget(names_2)
+#Sum the two columns and paste it together
+total_title <- sapply(list_df, function(x) paste(colSums(x[c('V3', 'V4')]), collapse = '_'))
+total_title <- paste(names_2, total_title, sep = '_')
+
+#make a dataframe from the file names and the sum of total cough and total cackle
+instrument <- data.frame(total_title)
+head(instrument)
+
+#separate columns by _ to create dataframe
+instrument.df <- separate(instrument,total_title,c('file','id','recording_index','chest_location','acquisition_mode','recording_equip','total_cough','total_crackle'),sep='_')
+
+#read in other two data frames with diagnosis and demographic info
+setwd("~/Downloads/archive/Respiratory_Sound_Database/Respiratory_Sound_Database")
+diagnosis <- read.csv('patient_diagnosis.csv',header = FALSE)
+
+setwd("~/Downloads/archive")
+demographic <- read.table('demographic_info.txt',header=FALSE)
+
+#change the header names
+colnames(demographic) <- c('id','age','gender','bmi','weight','height')
+head(demographic)
+
+colnames(diagnosis) <- c('id','diagnosis')
+
+#calculate bmi for children and put it in the bmi column
+demographic$bmi <- coalesce(demographic$bmi,demographic$height/demographic$weight)
+
+#change data type of ids to be the same
+demographic$id <- as.character(demographic$id)
+diagnosis$id <- as.character(diagnosis$id)
+instrument.df$id <- as.character(instrument.df$id)
+
+#merged all three dataframes into one
+merged.df <- inner_join(inner_join(demographic[,-c(5,6)],diagnosis,by = 'id'),instrument.df[,-c(1,3)],by = 'id')
+head(merged.df)
+
+#change data type for factors
+merged.df$chest_location <- factor(merged.df$chest_location)
+merged.df$acquisition_mode <- factor(merged.df$acquisition_mode)
+merged.df$recording_equip <- factor(merged.df$recording_equip)
+merged.df$gender <- factor(merged.df$gender)
+head(merged.df)
+
+#create reference categories
+merged.df$chest_location <- relevel(merged.df$chest_location, ref = "Pr") #create an item where those items can be mixed
+merged.df$acquisition_mode <- relevel(merged.df$acquisition_mode, ref = "mc")
+merged.df$recording_equip <- relevel(merged.df$recording_equip, ref = "LittC2SE")
+merged.df$gender <- relevel(merged.df$gender,ref = 'M')
+
+#delete LRTI because there's not enough data
+merged.df <- merged.df %>%
+  filter(diagnosis != "LRTI")
+merged.df$diagnosis <- factor(merged.df$diagnosis) #now you can factor the data; LRTI won't be included
+merged.df<-na.omit(merged.df) #omit NAs
+
+#####look at the data####
+par(mfrow = c(2,1))
+plot(merged.df$diagnosis, ylab = "Count of Diagnosis", col = "light blue")
+
+boxplot(merged.df$bmi~merged.df$diagnosis,xlab = 'Diagnosis',ylab = 'Age',col = c('red','light green','purple','light yellow','pink','light blue','orange'))
+
+#partition data
+set.seed(2)
+train.index <- sample(c(1:dim(merged.df)[1]), dim(merged.df)[1]*0.6)  
+train.df <- merged.df[train.index,-1]
+valid.df <- merged.df[-train.index,-1]
+
+head(valid.df)
+
+#change data type of total_crackle
+train.df$total_crackle <- as.integer(train.df$total_crackle)
+train.df$total_cough <- as.integer(train.df$total_crackle)
+valid.df$total_crackle <- as.integer(valid.df$total_crackle)
+valid.df$total_cough <- as.integer(valid.df$total_crackle)
+head(train.df)
+
+#run out multinomial logistic regression
+logit.reg <- multinom(diagnosis ~., data = train.df,na.action = na.exclude)
+options(scipen=9)
+summary(logit.reg)
+
+#Too many NaNs produced using chest_location and acquisition_mode
+merged.edit.df <- merged.df %>%
+  select(-c(chest_location,recording_equip))
+head(merged.edit.df)
+
+#re-partition data
+set.seed(2)
+train.index <- sample(c(1:dim(merged.edit.df)[1]), dim(merged.edit.df)[1]*0.6)  
+train.df <- merged.edit.df[train.index,-1]
+valid.df <- merged.edit.df[-train.index,-1]
+
+head(valid.df)
+
+#change data type again
+train.df$total_crackle <- as.integer(train.df$total_crackle)
+train.df$total_cough <- as.integer(train.df$total_crackle)
+valid.df$total_crackle <- as.integer(valid.df$total_crackle)
+valid.df$total_cough <- as.integer(valid.df$total_crackle)
+head(train.df)
+
+
+logit.reg.2 <- multinom(diagnosis ~., data = train.df,na.action = na.exclude)
+summary(logit.reg.2)
+
+
+pred_v <- predict(logit.reg.2,valid.df,type = "class")
+pred_t <- predict(logit.reg.2,train.df,type = "class")
+head(pred_v)
+
+##check accuracy
+confusionMatrix(pred_v,valid.df$diagnosis)
+
+#see if there are better models
+search <- regsubsets(diagnosis ~ ., data = train.df, nbest = 1, nvmax = dim(train.df)[2],
+                     method = "exhaustive")
+sum <- summary(search)
+sum
+
+Adjr2=which.max(sum$adjr2) #find how many variables needed to get max adjusted r2
+Adjr2 #only 5 variables recommended
+
+#now look at stepwise regression, no variables are dropped
+
+logit.reg.2.step <- step(logit.reg.2, direction = "both")
+summary(logit.reg.2.step) #same as our model
+#our second model is the best
+
+###Visualizations###
+
+plot(Effect("age",logit.reg.2))
+#shows predictions with confidence bands
+
+plot(Effect("bmi",logit.reg.2),multiline=T)
+#shows multiple lines of predictions in the same plot
+
+#makes table
+tab <- table(valid.df$diagnosis, pred_v)
+tab
