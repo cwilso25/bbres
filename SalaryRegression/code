@@ -1,0 +1,475 @@
+##Load Packages##
+library(Lahman)
+library(leaps)
+library(tidyverse)
+library(forecast)
+library(ggplot2)
+library(nortest)
+library(moments)
+library(car)
+
+pitching <- Lahman::Pitching %>%
+  filter(yearID >= 2007 & yearID <= 2016) #only data between 2005 and 2016 seasons
+
+#find the debut dates of all players
+debut <- Lahman::Master %>%
+  select(playerID,debut)
+head(debut)
+
+#use left join so playerID is the same, inner join to minimize NAs
+salaries.df <- left_join(inner_join(pitching,Lahman::Salaries,by = c('playerID','yearID','lgID','teamID')),debut,by = 'playerID')
+head(salaries.df)
+
+#separated year,month,day to get debut year
+salaries.df <- separate(salaries.df,debut,c('debutYear','debutMonth','debutDay'),sep = "-") 
+head(salaries.df)
+
+#made sure each predictor is correct class type
+salaries.df$debutYear <- as.integer(salaries.df$debutYear)
+salaries.df$lgID <- as.factor(salaries.df$lgID)
+
+salaries.df <- salaries.df %>%
+  select(-debutMonth,-debutDay) %>%
+  mutate(YearsInLeague = (yearID - debutYear)) %>%
+  filter(YearsInLeague >= 4)#filtered players who have played for less than 4 seasons
+
+head(salaries.df)
+colnames(salaries.df)
+
+selected_var <- c(6,7,11:19,31) #all possible predictors
+
+
+#add index column
+#partition the data
+set.seed(1)
+train.index <- sample(rownames(salaries.df), dim(salaries.df)[1]*0.6)
+train.df <- salaries.df[train.index, selected_var]
+valid.rows <- setdiff(rownames(salaries.df), train.index)
+valid.df <- salaries.df[valid.rows, selected_var]
+head(train.df)
+names(train.df)
+
+reg <- lm(salary~., data = train.df, na.action=na.exclude)
+summary(reg)
+
+pred_v <- predict(reg, newdata=valid.df,
+                  na.action=na.pass)
+
+accuracy(pred_v, valid.df$salary)#check the accuracy of the model
+
+
+#Exaustive Search
+search <- regsubsets(salary ~ ., data = train.df, nbest = 1, nvmax = dim(train.df)[2],
+                     method = "exhaustive")
+sum <- summary(search)
+sum
+# show models
+sum$which
+
+# show metrics
+sum$rsq
+sum$adjr2
+
+Adjr2=which.max(sum$adjr2) #find how many variables needed to get max adjusted r2
+Adjr2
+#find top 9 predictors
+sum #top predictors include SO + SHO + BB + ER + SV + W + BAOpp + H + L 
+
+reg.search <- lm(salary ~ SO + SHO + BB + ER + SV + W + BAOpp + H + L, data = train.df)
+summary(reg.search)
+reg.search.pred <- predict(reg.search, newdata = valid.df)
+accuracy(reg.search.pred, valid.df$salary)
+
+# use step() to run backwards stepwise regression.
+reg.backward <- step(reg, direction = "backward")
+summary(reg.backward)
+reg.backward.pred <- predict(reg.backward, valid.df) #same 
+accuracy(reg.backward.pred, valid.df$salary)
+
+#Forwards
+# create model with no predictors
+reg.null <- lm(salary~1, data = train.df)
+# use step() to run forward regression.
+reg.forward <- step(reg.null, scope=list(lower=reg.null, upper=reg), direction = "forward")
+summary(reg.forward)  # Which variables were added?
+reg.forward.pred <- predict(reg.forward, valid.df)
+accuracy(reg.forward.pred, valid.df$salary)
+
+#Stepwise
+# use step() to run stepwise regression in both directions
+reg.both <- step(reg, direction = "both")
+summary(reg.both)
+reg.both.pred <- predict(reg.both, newdata = valid.df) #predict the salary on validation data
+accuracy(reg.both.pred, valid.df$salary) #the result is the same as backward direction
+
+
+#Backward: salary ~ SHO + SV + ER + BB + SO
+#Forward: salary ~ SO + SHO + HR + SV + BB + ER + BAOpp
+#Both: salary ~ SHO + SV + ER + BB + SO
+#Exhaustive search: SO + SHO + BB + ER + SV + W + BAOpp + H + L
+
+#use pca analysis to select predictors for additional linear model
+selected_var2 <- c(6,7,11:19)
+pcs <- prcomp(na.omit(salaries.df[,selected_var2],scale. = TRUE))
+#For nomalized data, we need 2 princial components to account for more than 90% of the total variability
+summary(pcs)
+pcs$rotation
+head(pcs$x)
+
+pca.train.df <- data.frame(pcs$x[train.index,],train.df$salary)
+pca.valid.df <- data.frame(pcs$x[valid.rows,],valid.df$salary)
+
+reg.pca <- lm(train.df.salary ~ PC1,data = pca.train.df)
+summary(reg.pca)
+pred.pca <- predict(reg.pca,newdata = pca.valid.df)
+accuracy(pred.pca,pca.valid.df$valid.df.salary)
+
+#Compare accuracy of all models built
+accuracy(reg.backward.pred, valid.df$salary)
+accuracy(reg.forward.pred, valid.df$salary)
+accuracy(reg.both.pred, valid.df$salary) #Same as backwards
+accuracy(reg.search.pred, valid.df$salary)
+accuracy(pred.pca,pca.valid.df$valid.df.salary)
+
+
+#check for normality of residuals
+shapiro.test(reg.backward$residuals)
+#p-value is less than .05 which means it is not normally distributed
+ad.test(reg.backward$residuals) 
+#p-value is less than .05 which means it is not normally distributed according
+#to the  Anderson-Darling test.
+
+##################
+##Visualizations##
+##################
+
+# Salary Distribution
+salaries.scaled <- salaries.df%>%
+  mutate(salary = (salary/1000000))
+
+hist(salaries.scaled$salary, xlab = "Salary in Millions", main = "Distribution of Pitcher Salaries")
+
+
+#ERA vs Salary
+ggplot(salaries.df, aes(x=ERA,y=salary)) +
+  geom_point(color = "blue", alpha = .6) +
+  theme_minimal() +
+  ggtitle("Earned Run Average vs Salary") +
+  ylab('Salary (in millions)') +
+  xlab('Earned Run Average') +
+  scale_y_continuous(labels = function(x) format(x/1000000))
+
+#plot of just the residuals of Backwards/Stepwise Model
+par(mfrow = c(1,1))
+all.residuals.b <- valid.df$salary - reg.backward.pred #backwards regression
+hist(all.residuals.b, breaks = 25, xlab = "Residuals - Backwards Direction Regression Model", main = "",col = 'light green')
+##Use zoom feature to see plots better
+
+#Plot of the residuals oll models
+par(mfrow = c(4,1))
+all.residuals <- valid.df$salary - reg.search.pred #exhaustive search
+hist(all.residuals, breaks = 25, xlab = "Residuals - Exaustive Search Model", col = 'light blue', main = "")
+
+all.residuals.b <- valid.df$salary - reg.backward.pred #backwards/stepwise regression
+hist(all.residuals.b, breaks = 25, xlab = "Residuals - Backwards/Stepwise Model", main = "",col = 'light green')
+
+all.residuals.f <- valid.df$salary - reg.forward.pred #forwards regression
+hist(all.residuals.f, breaks = 25, xlab = "Residuals - Forwards Model", main = "", col = 'light yellow')
+
+all.residuals.p <- valid.df$salary - pred.pca #pca regression
+hist(all.residuals.p, breaks = 25, xlab = "Residuals - PCA Model", main = "", col = 'purple')
+
+##Use zoom feature to see plots better
+
+#predicted v actual salary for the Backwards/Stepwise model
+predicted_df3 <- data.frame(predicted = predict(reg.both, valid.df),
+                            actual=valid.df$salary)
+head(predicted_df3)
+ggplot(data = predicted_df3) +
+  geom_point(aes(y = predicted, x = actual),color = 'blue', alpha = .5) +
+  scale_x_continuous(labels = function(x) format(x/1000000),limits = c(0,30000000)) +
+  scale_y_continuous(labels = function(x) format(x/1000000),limits = c(0,30000000)) +
+  geom_line(aes(y = actual, x = actual),color = 'black') +
+  labs(x = "Actual (in millions)",
+       y = 'Predicted  (in millions)',
+       color = "Legend") +
+  theme_minimal()
+head(salaries.df)
+
+###############################
+##Grouping the Data by Salary##
+###############################
+#lowsalary < 1,000,000
+#midsalary - > 1,000,000 <10,000,000
+#allstars - >10,000,000
+
+
+###############
+#Low Salary#
+###############
+
+#< 1 million
+lowsalary <- salaries.df%>%
+  filter(salary < 1000000)
+dim(lowsalary)
+
+set.seed(1)
+train.index.low <- sample(rownames(lowsalary), dim(lowsalary)[1]*0.6)
+train.df.low <- lowsalary[train.index.low, selected_var]
+valid.rows.low <- setdiff(rownames(lowsalary), train.index.low)
+valid.df.low <- lowsalary[valid.rows.low, selected_var]
+head(train.df)
+
+reg.low <- lm(salary~., data = train.df.low, na.action=na.exclude)
+summary(reg)
+
+pred_v.low <- predict(reg.low, newdata=valid.df.low,
+                  na.action=na.pass)
+
+accuracy(pred_v.low, valid.df.low$salary)#check the accuracy of the model
+
+#see the best model
+search.low <- regsubsets(salary ~ ., data = train.df.low, nbest = 1, nvmax = dim(train.df.low)[2],
+                     method = "exhaustive")
+sum.low <- summary(search.low)
+sum.low
+# show models
+sum.low$which
+
+Adjr2.low=which.max(sum.low$adjr2) #find how many variables needed to get max adjusted r2
+Adjr2.low
+#find top 4 predictors
+sum.low
+
+reg.search.low <- lm(salary ~ ER + BB + SO + H, data = train.df.low)
+summary(reg.search.low)
+reg.search.pred.low <- predict(reg.search.low, newdata = valid.df.low)
+accuracy(reg.search.pred.low, valid.df.low$salary)
+
+# use step() to run backwards stepwise regression.
+reg.backward.low <- step(reg.low, direction = "backward")
+summary(reg.backward.low)
+reg.backward.pred.low <- predict(reg.backward.low, valid.df.low)
+accuracy(reg.backward.pred.low, valid.df.low$salary)
+
+
+# create model with no predictors
+reg.null.low <- lm(salary~1, data = train.df.low)
+# use step() to run forward regression.
+reg.forward.low <- step(reg.null.low, scope=list(lower=reg.null.low, upper=reg.low), direction = "forward")
+summary(reg.forward.low)
+reg.forward.pred.low <- predict(reg.forward.low, valid.df.low)
+accuracy(reg.forward.pred.low, valid.df.low$salary)
+
+
+# use step() to run stepwise regression in both directions
+reg.both.low <- step(reg.low, direction = "both")
+summary(reg.both.low)
+reg.both.pred.low <- predict(reg.both.low, newdata = valid.df.low) 
+accuracy(reg.both.pred.low, valid.df.low$salary)
+
+#use pca analysis to select predictors for additional linear model
+selected_var2 <- c(6,7,11:19)
+pcs.low <- prcomp(na.omit(lowsalary[,selected_var2],scale. = TRUE))
+#For normalized data, we need 2 principal components to account for more than 90% of the total variability
+summary(pcs.low)
+pcs.low$rotation
+head(pcs.low$x)
+
+
+pca.train.df.low <- data.frame(pcs.low$x[train.index.low,],train.df.low$salary)
+pca.valid.df.low <- data.frame(pcs.low$x[valid.rows.low,],valid.df.low$salary)
+
+reg.pca.low <- lm(train.df.low.salary ~ PC1,data = pca.train.df.low)
+summary(reg.pca.low)
+pred.pca.low <- predict(reg.pca.low,newdata = pca.valid.df.low)
+accuracy(pred.pca.low,pca.valid.df.low$valid.df.low.salary)
+
+#best model = forward/backward/pred (lowest RMSE)
+accuracy(reg.backward.pred.low, valid.df.low$salary)
+accuracy(reg.forward.pred.low, valid.df.low$salary)
+accuracy(reg.both.pred.low, valid.df.low$salary)
+accuracy(reg.search.pred.low, valid.df.low$salary)
+accuracy(pred.pca.low,pca.valid.df.low$valid.df.low.salary) 
+##Low Salary: salary ~ ER + BB + SO
+
+###############
+#Middle Salary#
+###############
+
+#>1 million and < 10 million
+
+midsalary <- salaries.df%>%
+  filter(salary > 1000000 &
+           salary < 10000000)
+dim(midsalary)
+
+set.seed(1)
+train.index.mid <- sample(rownames(midsalary), dim(midsalary)[1]*0.6)
+train.df.mid <- midsalary[train.index.mid, selected_var]
+valid.rows.mid <- setdiff(rownames(midsalary), train.index.mid)
+valid.df.mid <- midsalary[valid.rows.mid, selected_var]
+head(train.df)
+
+reg.mid <- lm(salary~., data = train.df.mid, na.action=na.exclude)
+summary(reg)
+
+pred_v.mid <- predict(reg.mid, newdata=valid.df.mid,
+                      na.action=na.pass)
+
+accuracy(pred_v.mid, valid.df.mid$salary)#check the accuracy of the model
+
+#see the best model
+search.mid <- regsubsets(salary ~ ., data = train.df.mid, nbest = 1, nvmax = dim(train.df.mid)[2],
+                         method = "exhaustive")
+sum.mid <- summary(search.mid)
+sum.mid
+# show models
+sum.mid$which
+
+Adjr2.mid=which.max(sum.mid$adjr2) #find how many variables needed to get max adjusted r2
+Adjr2.mid
+#find top 7 predictors
+sum.mid
+
+reg.search.mid <- lm(salary ~ SHO + SV + IPouts + H + ER + BB + SO, data = train.df.mid)
+summary(reg.search.mid)
+reg.search.pred.mid <- predict(reg.search.mid, newdata = valid.df.mid)
+accuracy(reg.search.pred.mid, valid.df.mid$salary)
+
+# use step() to run backwards stepwise regression.
+reg.backward.mid <- step(reg.mid, direction = "backward")
+summary(reg.backward.mid)
+reg.backward.pred.mid <- predict(reg.backward.mid, valid.df.mid)
+accuracy(reg.backward.pred.mid, valid.df.mid$salary)
+
+
+# create model with no predictors
+reg.null.mid <- lm(salary~1, data = train.df.mid)
+# use step() to run forward regression.
+reg.forward.mid <- step(reg.null.mid, scope=list(lower=reg.null.mid, upper=reg.mid), direction = "forward")
+summary(reg.forward.mid)
+reg.forward.pred.mid <- predict(reg.forward.mid, valid.df.mid)
+accuracy(reg.forward.pred.mid, valid.df.mid$salary)
+
+
+# use step() to run stepwise regression in both directions
+reg.both.mid <- step(reg.mid, direction = "both")
+summary(reg.both.mid)
+reg.both.pred.mid <- predict(reg.both.mid, newdata = valid.df.mid) 
+accuracy(reg.both.pred.mid, valid.df.mid$salary)
+
+#use pca analysis to select predictors for additional linear model
+selected_var2 <- c(6,7,11:19)
+pcs.mid <- prcomp(na.omit(midsalary[,selected_var2],scale. = TRUE))
+#For normalized data, we need 2 principal components to account for more than 90% of the total variability
+summary(pcs.mid)
+pcs.mid$rotation
+head(pcs.mid$x)
+
+
+pca.train.df.mid <- data.frame(pcs.mid$x[train.index.mid,],train.df.mid$salary)
+pca.valid.df.mid <- data.frame(pcs.mid$x[valid.rows.mid,],valid.df.mid$salary)
+
+reg.pca.mid <- lm(train.df.mid.salary ~ PC1,data = pca.train.df.mid)
+summary(reg.pca.mid)
+pred.pca.mid <- predict(reg.pca.mid,newdata = pca.valid.df.mid)
+accuracy(pred.pca.mid,pca.valid.df.mid$valid.df.mid.salary)
+
+##best model is both/backward/forward stepwise
+accuracy(reg.backward.pred.mid, valid.df.mid$salary)
+accuracy(reg.forward.pred.mid, valid.df.mid$salary)
+accuracy(reg.both.pred.mid, valid.df.mid$salary)
+accuracy(reg.search.pred.mid, valid.df.mid$salary)
+accuracy(pred.pca.mid,pca.valid.df.mid$valid.df.mid.salary)
+
+#Mid salary - best model: salary ~ SHO + SV + IPouts + H + ER + BB + SO
+
+###############
+#Allstar Salary#
+###############
+
+#> 10 million
+allstar <- salaries.df%>%
+  filter(salary > 10000000)
+dim(allstar) #smaller dataset than others
+
+set.seed(1)
+train.index.as <- sample(rownames(allstar), dim(allstar)[1]*0.6)
+train.df.as <- allstar[train.index.as, selected_var]
+valid.rows.as <- setdiff(rownames(allstar), train.index.as)
+valid.df.as <- allstar[valid.rows.as, selected_var]
+head(train.df)
+
+reg.as <- lm(salary~., data = train.df.as, na.action=na.exclude)
+summary(reg)
+
+pred_v.as <- predict(reg.as, newdata=valid.df.as,
+                     na.action=na.pass)
+
+accuracy(pred_v.as, valid.df.as$salary)#check the accuracy of the model
+
+#see the best model
+search.as <- regsubsets(salary ~ ., data = train.df.as, nbest = 1, nvmax = dim(train.df.as)[2],
+                        method = "exhaustive")
+sum.as <- summary(search.as)
+sum.as
+# show models
+sum.as$which
+
+Adjr2.as=which.max(sum.as$adjr2) #find how many variables needed to get max adjusted r2
+Adjr2.as
+#find top 3 predictors
+sum.as
+
+reg.search.as <- lm(salary ~ L + SV + SO + BB + H, data = train.df.as)
+summary(reg.search.as)
+reg.search.pred.as <- predict(reg.search.as, newdata = valid.df.as)
+accuracy(reg.search.pred.as, valid.df.as$salary)
+
+# use step() to run backwards stepwise regression.
+reg.backward.as <- step(reg.as, direction = "backward")
+summary(reg.backward.as)
+reg.backward.pred.as <- predict(reg.backward.as, valid.df.as)
+accuracy(reg.backward.pred.as, valid.df.as$salary)
+
+
+# create model with no predictors
+reg.null.as <- lm(salary~1, data = train.df.as)
+# use step() to run forward regression.
+reg.forward.as <- step(reg.null.as, scope=list(lower=reg.null.as, upper=reg.as), direction = "forward")
+summary(reg.forward.as)
+reg.forward.pred.as <- predict(reg.forward.as, valid.df.as)
+accuracy(reg.forward.pred.as, valid.df.as$salary)
+
+
+# use step() to run stepwise regression in both directions
+reg.both.as <- step(reg.as, direction = "both")
+summary(reg.both.as)
+reg.both.pred.as <- predict(reg.both.as, newdata = valid.df.as) 
+accuracy(reg.both.pred.as, valid.df.as$salary)
+
+#use pca analysis to select predictors for additional linear model
+selected_var2 <- c(6,7,11:19)
+pcs.as <- prcomp(na.omit(allstar[,selected_var2],scale. = TRUE))
+#For normalized data, we need 2 principal components to account for more than 90% of the total variability
+summary(pcs.as)
+pcs.as$rotation
+head(pcs.as$x)
+
+
+pca.train.df.as <- data.frame(pcs.as$x[train.index.as,],train.df.as$salary)
+pca.valid.df.as <- data.frame(pcs.as$x[valid.rows.as,],valid.df.as$salary)
+
+reg.pca.as <- lm(train.df.as.salary ~ PC1,data = pca.train.df.as)
+summary(reg.pca.as)
+pred.pca.as <- predict(reg.pca.as,newdata = pca.valid.df.as)
+accuracy(pred.pca.as,pca.valid.df.as$valid.df.as.salary)
+
+##backwards/forwards/both/exhaustive are same model
+accuracy(reg.backward.pred.as, valid.df.as$salary)
+accuracy(reg.forward.pred.as, valid.df.as$salary)
+accuracy(reg.both.pred.as, valid.df.as$salary)
+accuracy(reg.search.pred.as, valid.df.as$salary)
+accuracy(pred.pca.as,pca.valid.df.as$valid.df.as.salary)
+##Model for high salary - salary ~ PC1
