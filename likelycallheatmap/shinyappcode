@@ -1,0 +1,227 @@
+#Trackman...Master <- read.csv("Trackman - Master.csv")
+# rename dataset
+trackman <- Trackman...Master
+library(stringr)
+library(shiny)
+names(trackman) <- str_remove_all(names(trackman), "\\.")
+
+# pitch types
+summary(as.factor(trackman$AutoPitchType))
+
+# DataFrame
+no_swing_trackman <- trackman[trackman$PitchCall %in% c("StrikeCalled", "BallCalled"),
+                              c("PlateLocSide",
+                                "PlateLocHeight",
+                                "InducedVertBreak",
+                                "HorzBreak",
+                                "AutoPitchType",
+                                "Balls",
+                                "Strikes",
+                                "BatterSide",
+                                "RelSpeed",
+                                "PitchCall")]
+
+# Drop missing values and change some variable types to factor
+no_swing_trackman <- na.omit(no_swing_trackman)
+no_swing_trackman$PitchCall <- as.factor(no_swing_trackman$PitchCall)
+#no_swing_data$pitch_type <- as.factor(no_swing_data$pitch_type)
+no_swing_trackman$BatterSide <- as.factor(no_swing_trackman$BatterSide)
+#no_swing_data$fastball = ifelse(no_swing_data$pitch_type == "FF",1,0)
+
+# Creating the count format and making this a factor variable
+no_swing_trackman$count <- paste(no_swing_trackman$Balls,no_swing_trackman$Strikes,sep = "_")
+no_swing_trackman <- no_swing_trackman[,-c(6, 7)]
+no_swing_trackman$count <- as.factor(no_swing_trackman$count)
+no_swing_trackman$PitchCall <- as.factor(as.character(no_swing_trackman$PitchCall))
+
+# Load xgboost
+library(xgboost)
+# Convert data into numerical matrix
+# Makes categorical variables into indicators
+# [,-1] at end drops constant intercept column
+x_vars <- model.matrix(PitchCall ~., 
+                       data = no_swing_trackman)[,-1]
+# View numeric data
+summary(x_vars)
+# Create training data
+# XGBoost requires data in custom format
+dtrain <- xgb.DMatrix(data =x_vars, # Explanatory variables
+                      label = as.numeric(as.factor(no_swing_trackman$PitchCall)) -1) # Convert ball/strike to 0/1
+
+# Fit XGBoost Model
+bst_1 <- xgboost(data = dtrain, # Set training data
+                 
+                 nrounds = 100, # Set number of rounds
+                 
+                 verbose = 1, # 1 - Prints out fit
+                 print_every_n = 20, # Prints out result every 20th iteration
+                 
+                 objective = "binary:logistic", # Set objective
+                 eval_metric = "auc",
+                 eval_metric = "error") # Set evaluation metric to use
+preds <- predict(bst_1, dtrain)
+
+no_swing_trackman_3 <- trackman[rownames(trackman) %in% rownames(no_swing_trackman),]
+no_swing_trackman_3$prediction <- preds
+no_swing_trackman_3$label <- as.numeric(as.factor(no_swing_trackman$PitchCall)) -1
+no_swing_trackman_3$diff <- no_swing_trackman_3$label - no_swing_trackman_3$prediction
+
+### Create Grid to Test Predictions - Using just fastballs
+# Create grid vectors
+x_vals <- seq(from = min(no_swing_trackman$PlateLocSide), to = max(no_swing_trackman$PlateLocSide), by = 0.5)
+z_vals <- seq(from = min(no_swing_trackman$PlateLocHeight), to = max(no_swing_trackman$PlateLocHeight), by = 0.5)
+# Expand to all combinatons
+grids <- expand.grid(x_vals, z_vals)
+# Name first two columns
+names(grids) <- c("plate_x", "plate_z")
+
+# Add grid end locations:
+grids$plate_x_end <- grids$plate_x + 0.5
+grids$plate_z_end <- grids$plate_z + 0.5
+
+# Calculate balls and strikes falling in each grid zone:
+balls <- strikes <- rep(NA, nrow(grids))
+for(i in 1:nrow(grids)){
+  balls[i] <- sum(no_swing_trackman$PitchCall == "BallCalled" &
+                    no_swing_trackman$PlateLocSide >= grids$plate_x[i] &
+                    no_swing_trackman$PlateLocSide < grids$plate_x_end[i] &
+                    no_swing_trackman$PlateLocHeight >= grids$plate_z[i] &
+                    no_swing_trackman$PlateLocHeight < grids$plate_z_end[i])
+  strikes[i] <- sum(no_swing_trackman$PitchCall == "StrikeCalled" &
+                      no_swing_trackman$PlateLocSide >= grids$plate_x[i] &
+                      no_swing_trackman$PlateLocSide < grids$plate_x_end[i] &
+                      no_swing_trackman$PlateLocHeight >= grids$plate_z[i] &
+                      no_swing_trackman$PlateLocHeight < grids$plate_z_end[i])
+}
+
+# Drop locations with no strikes
+grids_2 <- grids[which(strikes > 0),]
+# Create finer grid
+x_vals <- seq(from = min(grids_2$plate_x), to = max(grids_2$plate_x_end), by = 0.05)
+z_vals <- seq(from = min(grids_2$plate_z), to = max(grids_2$plate_z_end), by = 0.05)
+
+# Expand to all combinatons
+grids <- expand.grid(x_vals, z_vals)
+# Name first two columns
+names(grids) <- c("plate_x", "plate_z")
+# Add grid end locations:
+grids$plate_x_end <- grids$plate_x + 0.5
+grids$plate_z_end <- grids$plate_z + 0.5
+# Create mid points for prediction
+grids$mid_x <- (grids$plate_x + grids$plate_x_end)/2
+grids$mid_z <- (grids$plate_z + grids$plate_z_end)/2
+
+# Define UI for app that draws a histogram ----
+ui <- fluidPage(
+  titlePanel("Interactive Heatmap of Likely Strike Calls"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      helpText("This is an interactive app that let's you visualize how the likelihood of a strike call changes as you adjust the count, pitch type, batter side,vertical break, and horizontal break. The square in the middle illustrates an example of a batter's box."),
+      selectInput("count", 
+                  label = "Choose a count",
+                  choices = c("count0_0", 
+                              "count0_1",
+                              "count0_2",
+                              "count1_0",
+                              "count1_1",
+                              "count1_2",
+                              "count2_0",
+                              "count2_1", 
+                              "count2_2",
+                              "count3_0",
+                              "count3_1",
+                              "count3_2"),
+                  selected = "count3_2"),
+    selectInput("PitchType", 
+                label = "Choose a pitch type",
+                choices = c("AutoPitchTypeCurveball",
+                            "AutoPitchTypeCutter",
+                            "AutoPitchTypeFastball",
+                            "AutoPitchTypeOther",
+                            "AutoPitchTypeSinker",
+                            "AutoPitchTypeSlider",
+                            "AutoPitchTypeSplitter",
+                            "AutoPitchTypeUndefined"),
+                selected = "AutoPitchTypeFastball"),
+    selectInput("BatterSide", 
+                label = "Choose a batting side",
+                choices = c("BatterSideRight",
+                            "BatterSideS",
+                            "BatterSideLeft"),
+                selected = "BatterSideS"),
+    numericInput("vertbreak", 
+                 h3("Vertical Break"), 
+                 value = 1),
+  numericInput("horzbreak", 
+               h3("Horizontal Break"), 
+               value = 1),
+    ),
+    mainPanel(
+      plotOutput(outputId = "map")
+    )
+  )
+)
+server <- function(input, output) {
+  output$map <- renderPlot({
+
+
+# Create data frame to store binary pitch type info - Fill with 0's for now
+pitch_db <- as.data.frame(matrix(0, nrow = nrow(grids), ncol = 26))
+# Name pitch_db
+names(pitch_db) <- c("InducedVertBreak","HorzBreak","AutoPitchTypeCurveball","AutoPitchTypeCutter",
+"AutoPitchTypeFastball","AutoPitchTypeOther","AutoPitchTypeSinker","AutoPitchTypeSlider","AutoPitchTypeSplitter","AutoPitchTypeUndefined",
+"BatterSideRight","BatterSideS","BatterSideUndefined","RelSpeed","count0_1","count0_2","count1_0","count1_1","count1_2",
+"count1_3","count2_0","count2_1","count2_2","count3_0","count3_1","count3_2")
+# Convert fastball column to 1s
+
+pitch_db[,which(colnames(pitch_db)==input$count)] <- 1
+pitch_db[,which(colnames(pitch_db)==input$PitchType)] <- 1
+if(input$BatterSide == "BatterSideLeft"){
+  pitch_db$BatterSideRight <- 0
+}else{
+  pitch_db[,which(colnames(pitch_db)==input$BatterSide)] <- 1
+}
+pitch_db$InducedVertBreak <- input$vertbreak
+pitch_db$HorzBreak <- input$horzbreak
+
+summary(pitch_db)
+
+# Create test grid data
+test_grid <- cbind.data.frame(grids$mid_x, grids$mid_z,pitch_db)
+# Rename first two columns as plate x and plate z so XGBoost works
+names(test_grid)[1:2] <- c("PlateLocSide", "PlateLocHeight")
+
+# Convert to XGBoost data type
+dtest <- xgb.DMatrix(data = as.matrix(test_grid))
+# Create grid predictions
+boost_preds_1 <- predict(bst_1, dtest)
+
+# Add prediction to grid
+grids$pred <- boost_preds_1
+
+# Plot Resulting grid
+g_1 <- ggplot(grids) +
+  geom_rect(aes(xmin = plate_x,  # Set minimum x value
+                xmax = plate_x_end ,  # Set maximum x value
+                ymin =  plate_z, # Set minimum y value
+                ymax = plate_z_end,  # Set maximum y value
+                fill = pred), # Set fill of each rectangle
+            alpha = 0.9) + # Set transperancy
+  scale_fill_gradient(low = "blue", high = "red") +
+  geom_rect(mapping=aes(xmin=-0.7083333, xmax=0.7083333, ymin=1.5, ymax=3),fill=NA, color="black", alpha=0.5) +
+  # Scale fill gradient 
+  xlim(-2,2)+
+  ylim(0,5)+
+  labs(title = "Heatmap of Strike Calls",
+       color = "Strike Rate") +
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank()) # Remove grid
+g_1
+
+  })
+  
+}
+shinyApp(ui = ui, server = server)
