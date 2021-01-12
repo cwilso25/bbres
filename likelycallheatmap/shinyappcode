@@ -117,7 +117,7 @@ ui <- fluidPage(
   
   sidebarLayout(
     sidebarPanel(
-      helpText("This is an interactive app that let's you visualize how the likelihood of a strike call changes as you adjust the count, pitch type, batter side,vertical break, and horizontal break. The square in the middle illustrates an example of a batter's box."),
+      helpText("This is an interactive app that let's you visualize how the likelihood of a strike call changes as you adjust the count, pitch type, batter side,vertical break, horizontal break, and relative speed. The square in the middle illustrates an example of a batter's box."),
       selectInput("count", 
                   label = "Choose a count",
                   choices = c("count0_0", 
@@ -156,6 +156,9 @@ ui <- fluidPage(
   numericInput("horzbreak", 
                h3("Horizontal Break"), 
                value = 1),
+  numericInput("relspeed", 
+               h3("Relative Speed"), 
+               value = 1)
     ),
     mainPanel(
       plotOutput(outputId = "map")
@@ -184,6 +187,7 @@ if(input$BatterSide == "BatterSideLeft"){
 }
 pitch_db$InducedVertBreak <- input$vertbreak
 pitch_db$HorzBreak <- input$horzbreak
+pitch_db$RelSpeed <- input$relspeed
 
 summary(pitch_db)
 
