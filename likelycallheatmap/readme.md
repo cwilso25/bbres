@@ -12,7 +12,7 @@ Finally, I created a shiny app to display the heatmap and made it interactive, b
 Shiny Apps was necessary in creating the heatmap.
 
 # Authors
-Claire Wilson (@cwilso25)
+Claire Wilson (@cwilso25) with help from Martin Barrons, Vincent Zona, and Scott Nestler
 
 # License
 This project is licensed under the MIT License - see the LICENSE.md file for details
